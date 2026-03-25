@@ -53,7 +53,7 @@ class MailCheckerEnvironment(Environment):
     def reset(self) -> MailCheckerObservation:
         """
         Reset the environment.
-
+        
         Returns:
             MailCheckerObservation with a ready message
         """

@@ -10,7 +10,7 @@ Data models for the Mail Checker Environment.
 The mail_checker environment is a simple test environment that echoes back messages.
 """
 
-from openenv.core.env_server.types import Action, Observation
+from openenv.core.env_server.types import Action, Observation, State
 from pydantic import Field
 
 
@@ -25,3 +25,6 @@ class MailCheckerObservation(Observation):
 
     echoed_message: str = Field(default="", description="The echoed message")
     message_length: int = Field(default=0, description="Length of the echoed message")
+
+class MailCheckerState(State):
+    pass
