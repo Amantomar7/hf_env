@@ -1,0 +1,2 @@
+[console_scripts]
+server = mail_checker.server.app:main
