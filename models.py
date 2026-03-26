@@ -16,15 +16,20 @@ from pydantic import Field
 
 class MailCheckerAction(Action):
     """Action for the Mail Checker environment - just a message to echo."""
-
-    message: str = Field(..., description="Message to echo back")
+    
+    action_type: str
+    category: str
+    priority: str
 
 
 class MailCheckerObservation(Observation):
-    """Observation from the Mail Checker environment - the echoed message."""
-
-    echoed_message: str = Field(default="", description="The echoed message")
-    message_length: int = Field(default=0, description="Length of the echoed message")
+    email_from: str
+    subject: str
+    body: str
+    step: int
+    available_actions: list[str]
+    done: bool
+    reward: float          # ← was int, change to float
 
 class MailCheckerState(State):
     pass
