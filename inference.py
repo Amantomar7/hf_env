@@ -1,110 +1,173 @@
 import os
-import sys
+import re
 import json
 import requests
 from openai import OpenAI
+import base64
+import textwrap
+from io import BytesIO
+from typing import List, Optional, Dict
+import numpy as np
+from PIL import Image
 
 # ── required env vars ───────────────────
-API_BASE_URL = os.environ.get("API_BASE_URL", "")
-MODEL_NAME   = os.environ.get("MODEL_NAME", "")
-HF_TOKEN     = os.environ.get("HF_TOKEN")
-ENV_URL      = os.environ.get("ENV_URL", "")
+API_BASE_URL = os.getenv("API_BASE_URL") // "https://router.huggingface.co/v1"
+API_KEY      = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+MODEL_NAME   = os.getenv("MODEL_NAME")
+ENV_URL      = os.getenv("ENV_URL", "https://bfs-search-mail-checker.hf.space")
+MAX_STEPS    = 10
+TEMPERATURE  = 0.0
+MAX_TOKENS   = 200
+MAX_DOM_CHARS = 3500
+FALLBACK_ACTION = {
+    "action_type": "archive",
+    "category": "general",
+    "priority": "low"
+}
 
-if not HF_TOKEN:
-    print("Error: HF_TOKEN environment variable not set.")
-    sys.exit(1)
-
-# ── OpenAI client using API_BASE_URL ────
-client = OpenAI(
-    api_key=HF_TOKEN,
-    base_url=API_BASE_URL,
-)
-
-# ── LLM decision ────────────────────────
-def ask_llm(obs: dict) -> dict:
-    prompt = f"""You are an expert email triage assistant.
-
-Read this email and classify it.
-
-From: {obs['email_from']}
-Subject: {obs['subject']}
-Body: {obs['body']}
-
-Respond ONLY with JSON, no explanation, no markdown:
-{{
-    "action_type": "respond or escalate or archive",
-    "category": "spam or billing or support or sales or general",
-    "priority": "high or medium or low"
-}}
+SYSTEM_PROMPT = """
+You are an expert email triage assistant.
+Given an email, you must classify it and decide what to do.
+Reply with ONLY a JSON object, no explanation, no markdown fences.
 
 Rules:
-- spam/newsletters → archive, low priority
-- billing disputes → escalate, high priority
+- spam or newsletters → archive, low priority
+- billing disputes or double charges → escalate, high priority
 - simple questions → respond, medium priority
-- angry customers → escalate, high priority
-- enterprise/sales → escalate, high priority"""
+- angry customers or legal threats → escalate, high priority
+- enterprise or sales leads → escalate, high priority
+- cannot log in or account issues → respond, high priority
 
-    response = client.chat.completions.create(
-        model=MODEL_NAME,
-        temperature=0,
-        messages=[{"role": "user", "content": prompt}]
-    )
+Valid values:
+- action_type: respond, escalate, archive
+- category: spam, billing, support, sales, general
+- priority: high, medium, low
+""".strip()
 
-    raw = response.choices[0].message.content.strip()
-    raw = raw.replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
 
-# ── run one task ────────────────────────
-def run_task(task_id: str) -> float:
+def build_user_prompt(observation: dict) -> str:
+    return f"""
+From: {observation.get('email_from', '')}
+Subject: {observation.get('subject', '')}
+Body: {observation.get('body', '')}
+
+Reply with exactly this JSON format:
+{{"action_type": "...", "category": "...", "priority": "..."}}
+""".strip()
+
+
+def parse_model_action(response_text: str) -> dict:
+    if not response_text:
+        return FALLBACK_ACTION
+
+    # Strip markdown fences if present
+    clean = response_text.strip()
+    clean = re.sub(r"```json|```", "", clean).strip()
+
+    try:
+        parsed = json.loads(clean)
+        # Validate required fields exist
+        if all(k in parsed for k in ["action_type", "category", "priority"]):
+            return parsed
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    return FALLBACK_ACTION
+
+
+def run_task(client: OpenAI, task_id: str) -> float:
     print(f"\n{'='*45}")
     print(f"  TASK: {task_id.upper()}")
     print(f"{'='*45}")
 
-    r = requests.post(f"{ENV_URL}/reset", params={"task_id": task_id})
-    if r.status_code != 200:
-        print(f"Reset failed: {r.text}")
+    # Reset environment
+    try:
+        r = requests.post(
+            f"{ENV_URL}/reset",
+            params={"task_id": task_id},
+            timeout=30
+        )
+        r.raise_for_status()
+    except Exception as e:
+        print(f"  Reset failed: {e}")
         return 0.0
 
+    result = r.json()
     total_reward = 0.0
     steps = 0
     done = False
-    result = r.json()
 
-    while not done:
-        obs = result["observation"]
+    while not done and steps < MAX_STEPS:
+        observation = result["observation"]
+        done = result.get("done", False)
 
-        print(f"\n  Email {steps+1}:")
-        print(f"  From    : {obs['email_from']}")
-        print(f"  Subject : {obs['subject']}")
+        if done:
+            break
 
+        print(f"\n  Email {steps + 1}:")
+        print(f"  From    : {observation.get('email_from', '')}")
+        print(f"  Subject : {observation.get('subject', '')}")
+
+        # Build prompt
+        user_prompt = build_user_prompt(observation)
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user",   "content": user_prompt},
+        ]
+
+        # Call LLM
         try:
-            decision = ask_llm(obs)
+            completion = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=messages,
+                temperature=TEMPERATURE,
+                max_tokens=MAX_TOKENS,
+                stream=False,
+            )
+            response_text = completion.choices[0].message.content or ""
+        except Exception as exc:
+            print(f"  Model request failed: {exc}. Using fallback.")
+            response_text = ""
+
+        # Parse action
+        action = parse_model_action(response_text)
+        print(f"  Decision: {action}")
+
+        # Send to environment
+        try:
+            r = requests.post(
+                f"{ENV_URL}/step",
+                json={"action": action},
+                timeout=30
+            )
+            r.raise_for_status()
+            result = r.json()
         except Exception as e:
-            print(f"  LLM error: {e}, using fallback")
-            decision = {
-                "action_type": "archive",
-                "category": "general",
-                "priority": "low"
-            }
+            print(f"  Step failed: {e}")
+            break
 
-        print(f"  Decision: {decision}")
-
-        r = requests.post(f"{ENV_URL}/step", json={"action": decision})
-        result = r.json()
-
-        reward = result["reward"]
-        done   = result["done"]
+        reward = result.get("reward", 0.0)
+        done   = result.get("done", False)
         total_reward += reward
         steps += 1
 
         print(f"  Reward  : {reward}")
 
+        if done:
+            print("  Episode complete.")
+            break
+
     avg = total_reward / steps if steps > 0 else 0.0
     print(f"\n  Score for {task_id}: {avg:.2f}")
     return avg
 
-# ── main ────────────────────────────────
-if __name__ == "__main__":
+
+def main() -> None:
+    if not API_KEY:
+        raise ValueError("HF_TOKEN or API_KEY environment variable not set.")
+
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+
     print("Mail Checker — Inference Evaluation")
     print(f"Model   : {MODEL_NAME}")
     print(f"API URL : {API_BASE_URL}")
@@ -112,7 +175,7 @@ if __name__ == "__main__":
 
     scores = {}
     for task in ["easy", "medium", "hard"]:
-        scores[task] = run_task(task)
+        scores[task] = run_task(client, task)
 
     print(f"\n{'='*45}")
     print("  FINAL SCORES")
@@ -124,3 +187,7 @@ if __name__ == "__main__":
     overall = sum(scores.values()) / len(scores)
     print(f"\n  Overall : {overall:.2f}")
     print(f"{'='*45}")
+
+
+if __name__ == "__main__":
+    main()
