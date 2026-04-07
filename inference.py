@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image
 
 # ── required env vars ───────────────────
-API_BASE_URL = os.getenv("API_BASE_URL") // "https://router.huggingface.co/v1"
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 API_KEY      = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 MODEL_NAME   = os.getenv("MODEL_NAME")
 ENV_URL      = os.getenv("ENV_URL", "https://bfs-search-mail-checker.hf.space")
