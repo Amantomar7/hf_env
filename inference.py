@@ -76,10 +76,7 @@ def parse_model_action(response_text: str) -> dict:
 
 
 def run_task(client: OpenAI, task_id: str) -> float:
-    print(f"\n{'='*45}")
-    print(f"  TASK: {task_id.upper()}")
-    print(f"{'='*45}")
-
+    print(f"[START] task={task_id}", flush=True)
     # Reset environment
     try:
         r = requests.post(
@@ -104,10 +101,6 @@ def run_task(client: OpenAI, task_id: str) -> float:
         if done:
             break
 
-        print(f"\n  Email {steps + 1}:")
-        print(f"  From    : {observation.get('email_from', '')}")
-        print(f"  Subject : {observation.get('subject', '')}")
-
         # Build prompt
         user_prompt = build_user_prompt(observation)
         messages = [
@@ -126,12 +119,12 @@ def run_task(client: OpenAI, task_id: str) -> float:
             )
             response_text = completion.choices[0].message.content or ""
         except Exception as exc:
-            print(f"  Model request failed: {exc}. Using fallback.")
+            print(f"  Model request failed: {exc}. Using fallback.", flush=True)
             response_text = ""
 
         # Parse action
         action = parse_model_action(response_text)
-        print(f"  Decision: {action}")
+        # print(f"  Decision: {action}")
 
         # Send to environment
         try:
@@ -143,7 +136,8 @@ def run_task(client: OpenAI, task_id: str) -> float:
             r.raise_for_status()
             result = r.json()
         except Exception as e:
-            print(f"  Step failed: {e}")
+            # print(f"  Step failed: {e}")
+            print(f"[END] task={task_id} score=0.0 steps={steps}", flush=True)
             break
 
         reward = result.get("reward", 0.0)
@@ -151,14 +145,16 @@ def run_task(client: OpenAI, task_id: str) -> float:
         total_reward += reward
         steps += 1
 
-        print(f"  Reward  : {reward}")
+        # print(f"  Reward  : {reward}")
+        print(f"[STEP] step={steps} reward={reward}", flush=True)
 
         if done:
-            print("  Episode complete.")
+            # print("  Episode complete.")
             break
 
     avg = total_reward / steps if steps > 0 else 0.0
-    print(f"\n  Score for {task_id}: {avg:.2f}")
+    # print(f"\n  Score for {task_id}: {avg:.2f}")
+    print(f"[END] task={task_id} score={round(avg, 4)} steps={steps}", flush=True)
     return avg
 
 
@@ -168,25 +164,21 @@ def main() -> None:
 
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
-    print("Mail Checker — Inference Evaluation")
-    print(f"Model   : {MODEL_NAME}")
-    print(f"API URL : {API_BASE_URL}")
-    print(f"Server  : {ENV_URL}")
+    print(f"Model   : {MODEL_NAME}", flush=True)
+    print(f"API URL : {API_BASE_URL}", flush=True)
+    print(f"Server  : {ENV_URL}", flush=True)
 
     scores = {}
     for task in ["easy", "medium", "hard"]:
         scores[task] = run_task(client, task)
 
-    print(f"\n{'='*45}")
-    print("  FINAL SCORES")
-    print(f"{'='*45}")
+    print(f"\nFINAL SCORES", flush=True)
     for task, score in scores.items():
         bar = "█" * int(score * 20)
-        print(f"  {task:<8}: {score:.2f}  {bar}")
+        print(f"  {task}: {score:.4f}", flush=True)
 
     overall = sum(scores.values()) / len(scores)
-    print(f"\n  Overall : {overall:.2f}")
-    print(f"{'='*45}")
+    print(f"  overall: {overall:.4f}", flush=True)
 
 
 if __name__ == "__main__":
