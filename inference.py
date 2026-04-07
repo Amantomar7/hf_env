@@ -11,10 +11,10 @@ import numpy as np
 from PIL import Image
 
 # ── required env vars ───────────────────
-API_BASE_URL = os.getenv("API_BASE_URL") or "https://bfs-search-mail-checker.hf.space"
-API_KEY      = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+API_BASE_URL = os.getenv("API_BASE_URL")
+API_KEY      = os.getenv("API_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
-ENV_URL      = API_BASE_URL
+ENV_URL      = "https://bfs-search-mail-checker.hf.space"
 MAX_STEPS    = 10
 TEMPERATURE  = 0.0
 MAX_TOKENS   = 200
